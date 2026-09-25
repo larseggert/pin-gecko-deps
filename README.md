@@ -28,9 +28,31 @@ their latest available versions.
 Set `GITHUB_TOKEN` (or `GITHUB_API_TOKEN`) in the environment to avoid GitHub
 API rate limits when fetching Gecko metadata.
 
-## Linting and type checking
+## Installation
+
+For one-off use, `uvx` (shown above) fetches and runs a command without
+installing anything. To install both commands persistently:
 
 ```shell
-uv run --group dev ruff check .
-uv run --group dev mypy .
+uv tool install --from git+https://github.com/larseggert/pin-gecko-deps pin-gecko-deps
 ```
+
+Or with `pip install .` / `pipx install .` from a checkout of this repo.
+
+## Development
+
+```shell
+uv sync --group dev   # ruff, ty, pytest
+
+uv run ruff check .
+uv run ruff format --check .
+uv run ty check
+uv run pytest
+```
+
+## License
+
+Licensed under the Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)
+or <http://www.apache.org/licenses/LICENSE-2.0>) or the MIT license
+([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>), at your
+option.

@@ -1,0 +1,18 @@
+name: Dependency review
+
+on:
+  pull_request:
+
+concurrency:
+  group: dependency-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    uses: mozilla/actions/.github/workflows/dependency-review.yml@32d84c77ea1bb513afbd253f94f67ae138b7d8be # v2.0.10
+    permissions:
+      contents: read

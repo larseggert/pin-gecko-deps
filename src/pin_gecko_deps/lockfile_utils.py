@@ -45,7 +45,7 @@ def load_lockfile(src: str) -> dict:
     if src.startswith(("http://", "https://")):
         with urlopen(src, timeout=HTTP_TIMEOUT) as response:
             return tomlkit.loads(response.read().decode())
-    with open(src, "r", encoding="utf-8") as f:
+    with open(src, encoding="utf-8") as f:
         return tomlkit.load(f)
 
 
@@ -145,9 +145,8 @@ def find_dependents(lock: dict, package: str, version: str | None = None) -> lis
             dep_name = parts[0]
             dep_ver = parts[1] if len(parts) > 1 else None
 
-            if dep_name == package:
-                if version is None or dep_ver == version:
-                    dependents.append(f"{pkg['name']} {pkg['version']}")
+            if dep_name == package and (version is None or dep_ver == version):
+                dependents.append(f"{pkg['name']} {pkg['version']}")
     return dependents
 
 
@@ -173,7 +172,7 @@ def workspace_crates(lock: dict) -> set[str]:
 def expand_dependents_closure(
     seeds: set[str], dependents_map: dict[str, set[str]]
 ) -> set[str]:
-    """Expand a seed set by iteratively adding packages whose dependents are all in the set.
+    """Expand a seed set by adding packages whose dependents are all in the set.
 
     Uses a fixed-point algorithm: if every dependent of a package is already
     in the result set, that package is added too. Repeats until stable.
@@ -230,11 +229,10 @@ def fetch_netwerk_crates() -> set[str]:
             with urlopen(raw_url, timeout=HTTP_TIMEOUT) as response:
                 content = response.read().decode()
                 for line in content.split("\n"):
-                    if line.strip().startswith("name"):
-                        if "=" in line and '"' in line:
-                            name = line.split('"')[1]
-                            crates.add(name)
-                            break
+                    if line.strip().startswith("name") and "=" in line and '"' in line:
+                        name = line.split('"')[1]
+                        crates.add(name)
+                        break
         except Exception as e:
             print(f"Warning: Could not fetch {path}: {e}", file=sys.stderr)
 
@@ -289,7 +287,7 @@ def collect_dep_categories() -> tuple[set[str], set[str]]:
 
     Returns (normal_deps, dev_build_roots).
     """
-    with open("Cargo.toml", "r", encoding="utf-8") as f:
+    with open("Cargo.toml", encoding="utf-8") as f:
         workspace = tomlkit.load(f)
 
     members = workspace.get("workspace", {}).get("members", [])
@@ -301,7 +299,7 @@ def collect_dep_categories() -> tuple[set[str], set[str]]:
         member_toml = Path(member) / "Cargo.toml"
         if not member_toml.exists():
             continue
-        with open(member_toml, "r", encoding="utf-8") as f:
+        with open(member_toml, encoding="utf-8") as f:
             cargo = tomlkit.load(f)
 
         normal_deps.update(cargo.get("dependencies", {}))
@@ -384,9 +382,7 @@ def find_non_gecko_duplicates(
                 our_by_range,
                 key=lambda r: max(Version(v) for v in our_by_range[r]),
             )
-            off_versions = [
-                v for v in registry_vers if semver_range(v) != keep_range
-            ]
+            off_versions = [v for v in registry_vers if semver_range(v) != keep_range]
 
         if off_versions:
             result[name] = off_versions
@@ -401,7 +397,7 @@ def find_dev_only_packages() -> set[str]:
     """
     normal_deps, dev_build_roots = collect_dep_categories()
 
-    with open("Cargo.lock", "r", encoding="utf-8") as f:
+    with open("Cargo.lock", encoding="utf-8") as f:
         lock = tomlkit.load(f)
 
     pkg_deps: dict[str, list[str]] = {}

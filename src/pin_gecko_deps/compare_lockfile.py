@@ -22,7 +22,7 @@ import sys
 
 from packaging.version import Version
 
-from lockfile_utils import (
+from .lockfile_utils import (
     classify_version_relation,
     find_dependents,
     find_dev_only_packages,
@@ -35,10 +35,10 @@ from lockfile_utils import (
     semver_range,
 )
 
-
 # ---------------------------------------------------------------------------
 # Version-comparison helpers
 # ---------------------------------------------------------------------------
+
 
 def find_version_issues(
     ours: list[tuple[str, str]], theirs: list[tuple[str, str]]
@@ -154,6 +154,7 @@ def categorize_mismatch(
 # Invariant checking
 # ---------------------------------------------------------------------------
 
+
 def check_invariant_a(
     our_lock: dict, gecko_versions: dict
 ) -> list[tuple[str, str, str]]:
@@ -164,10 +165,9 @@ def check_invariant_a(
     violations = []
     for name, off_vers in find_non_gecko_duplicates(our_lock, gecko_versions).items():
         for off_ver in sorted(off_vers):
-            violations.append((
-                name, off_ver,
-                f"extra version {off_ver} not present in Gecko"
-            ))
+            violations.append(
+                (name, off_ver, f"extra version {off_ver} not present in Gecko")
+            )
     return violations
 
 
@@ -193,12 +193,9 @@ def classify_issues_by_severity(
         category = categorize_mismatch(name, issues, neqo_only, dev_only, our_lock)
 
         # Check if any issue is a BEHIND move for a production dep.
-        has_hard_behind = (
-            category == "PRODUCTION"
-            and any(
-                gecko_ver is not None and Version(our_ver) < Version(gecko_ver)
-                for _, our_ver, gecko_ver in issues
-            )
+        has_hard_behind = category == "PRODUCTION" and any(
+            gecko_ver is not None and Version(our_ver) < Version(gecko_ver)
+            for _, our_ver, gecko_ver in issues
         )
 
         entry = (name, our_str, their_str, status, issues, category)
@@ -214,11 +211,15 @@ def classify_issues_by_severity(
 # Reporting
 # ---------------------------------------------------------------------------
 
+
 def print_invariant_a_violations(violations: list[tuple[str, str, str]]) -> None:
     print(f"\n{'=' * 110}")
-    print(f"HARD VIOLATIONS — Invariant A: non-Gecko duplicate versions ({len(violations)}):")
+    print(
+        f"HARD VIOLATIONS — Invariant A: non-Gecko duplicate versions "
+        f"({len(violations)}):"
+    )
     print(f"{'=' * 110}")
-    for name, off_ver, desc in violations:
+    for name, _off_ver, desc in violations:
         print(f"  {name}: {desc}")
     print("  Run update-lockfile to attempt auto-resolution.")
 
@@ -227,9 +228,7 @@ def print_version_violations(label: str, entries: list) -> None:
     print(f"\n{'=' * 110}")
     print(f"{label} ({len(entries)}):")
     print(f"{'=' * 110}")
-    print(
-        f"{'Package':<30} {'Our Version(s)':<25} {'Gecko Version(s)':<25} {'Status'}"
-    )
+    print(f"{'Package':<30} {'Our Version(s)':<25} {'Gecko Version(s)':<25} {'Status'}")
     print("-" * 110)
     for name, our_str, their_str, status, _issues, category in entries:
         print(f"{name:<30} {our_str:<25} {their_str:<25} {status}")
@@ -246,6 +245,7 @@ def print_matches(matches: list) -> None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main():
     """Compare Cargo.lock versions with Gecko's and verify alignment invariants."""
@@ -294,7 +294,10 @@ def main():
     n_hard = len(dup_violations) + len(hard_behind)
     print(f"\nSummary: {len(matches)} matches, {len(mismatches)} mismatches")
     print(f"  Duplicates:  {len(dup_violations)} hard violation(s)")
-    print(f"  Behind Gecko: {len(hard_behind)} hard violation(s), {len(warnings)} warning(s)")
+    print(
+        f"  Behind Gecko: {len(hard_behind)} hard violation(s), "
+        f"{len(warnings)} warning(s)"
+    )
     if n_hard:
         print(f"\nTotal: {n_hard} hard violation(s) — run update-lockfile to fix.")
     else:

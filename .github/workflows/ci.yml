@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv sync --group dev
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run ty check
+      - run: uv run pytest
+      - name: Smoke-test the built wheel in isolation
+        run: |
+          uv build
+          python3 -m venv /tmp/pin-gecko-deps-wheel-venv
+          /tmp/pin-gecko-deps-wheel-venv/bin/pip install dist/*.whl
+          /tmp/pin-gecko-deps-wheel-venv/bin/python -c \
+            "import pin_gecko_deps.compare_lockfile, pin_gecko_deps.update_lockfile"
+          test -x /tmp/pin-gecko-deps-wheel-venv/bin/compare-lockfile
+          test -x /tmp/pin-gecko-deps-wheel-venv/bin/update-lockfile

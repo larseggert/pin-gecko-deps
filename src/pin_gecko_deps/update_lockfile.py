@@ -29,13 +29,13 @@ from pathlib import Path
 
 from packaging.version import Version
 
-from lockfile_utils import (
+from .lockfile_utils import (
     build_dependents_map,
     classify_version_relation,
     find_dependents,
     find_dev_only_packages,
-    find_non_gecko_duplicates,
     find_neqo_or_workspace_deps,
+    find_non_gecko_duplicates,
     get_all_versions,
     get_duplicate_packages,
     group_by_semver_range,
@@ -492,7 +492,8 @@ def main():
     common = set(gecko_pkgs) & set(our_pkgs)
 
     # Phase 2: Align shared deps to Gecko's exact version (up or down).
-    # Dev/build-only deps are only upgraded, never downgraded (see collect_version_updates).
+    # Dev/build-only deps are only upgraded, never downgraded
+    # (see collect_version_updates).
     dev_only = find_dev_only_packages()
     version_updates = collect_version_updates(
         common, neqo_only, dev_only, gecko_pkgs, our_pkgs
@@ -528,7 +529,9 @@ def main():
             if not new_updates:
                 break
             attempted |= set(new_updates.keys())
-            extra_updated, extra_downgraded, extra_failed = apply_version_updates(new_updates)
+            extra_updated, extra_downgraded, extra_failed = apply_version_updates(
+                new_updates
+            )
             updated.extend(extra_updated)
             downgraded.extend(extra_downgraded)
             failed.update(extra_failed)
@@ -540,8 +543,7 @@ def main():
         }
         explicitly_changed = {name for name, _, _ in updated + downgraded}
         silent = sorted(
-            {name for name, _ in after_versions - before_versions}
-            - explicitly_changed
+            {name for name, _ in after_versions - before_versions} - explicitly_changed
         )
 
         print()

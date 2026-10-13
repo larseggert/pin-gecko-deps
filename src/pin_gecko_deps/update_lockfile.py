@@ -62,39 +62,46 @@ from .lockfile_utils import (
 )
 
 
-def try_cargo_update(specs: list[str]) -> set[tuple[str, str]]:
+def try_cargo_update(specs: list[str]) -> tuple[set[tuple[str, str]], str]:
     """Run cargo update for the given name@version specs, or roll back.
 
     Snapshots the lockfile first and restores it if cargo fails or if the update
     would add a duplicate version, so callers don't have to track it themselves.
-    Returns the (name, version) entries present afterwards, or an empty set if the
-    update was rolled back.
+    Returns the (name, version) entries present afterwards and an empty reason, or
+    an empty set and the reason if the update was rolled back.
     """
     snapshot = LOCKFILE.read_text(encoding="utf-8")
-    duplicates_before = get_duplicate_packages(current_lock())
+    versions_before = versions_by_name(current_lock())
 
     result = run_cargo("update", *(arg for spec in specs for arg in ("-p", spec)))
     if result.returncode == 0:
         new_lock = current_lock()
-        regressed = any(
-            len(vers) > len(duplicates_before.get(name, ()))
-            for name, vers in get_duplicate_packages(new_lock).items()
-        )
-        if not regressed:
-            return {(pkg["name"], pkg["version"]) for pkg in packages(new_lock)}
+        added = [
+            f"{name} {', '.join(sorted(vers - versions_before.get(name, set())))}"
+            for name, vers in sorted(get_duplicate_packages(new_lock).items())
+            if len(vers) > len(versions_before.get(name, ()))
+        ]
+        if not added:
+            return {(pkg["name"], pkg["version"]) for pkg in packages(new_lock)}, ""
+        reason = f"would add duplicate {'; '.join(added)}"
+    else:
+        errors = [ln for ln in result.stderr.splitlines() if ln.startswith("error")]
+        reason = (errors or result.stderr.strip().splitlines() or ["cargo failed"])[0]
 
     LOCKFILE.write_text(snapshot, encoding="utf-8")
-    return set()
+    return set(), reason
 
 
-def update_to_latest(names: list[str]) -> tuple[dict[str, tuple[str, str]], list[str]]:
+def update_to_latest(
+    names: list[str],
+) -> tuple[dict[str, tuple[str, str]], list[tuple[str, str]]]:
     """Update all named packages to their latest compatible versions.
 
     Tries a batch update first (allows transitive deps to unify), then falls
     back to per-package updates so that packages which would introduce duplicates
     are skipped while the rest still get updated.
 
-    Returns ({package name: (old_version, new_version)}, rejected specs), where a
+    Returns ({package name: (old_version, new_version)}, [(spec, reason)]), where a
     rejected spec is one cargo refused or that would have added a duplicate.
     """
     if not names:
@@ -105,8 +112,8 @@ def update_to_latest(names: list[str]) -> tuple[dict[str, tuple[str, str]], list
     # so the retry order, and so the report, are reproducible.
     specs = [f"{name}@{ver}" for name, ver in sorted(before)]
 
-    rejected: list[str] = []
-    after = try_cargo_update(specs)
+    rejected: list[tuple[str, str]] = []
+    after, _ = try_cargo_update(specs)
     if not after:
         # The batch was rejected as a whole; retry one spec at a time.
         after = current_versions()
@@ -114,10 +121,11 @@ def update_to_latest(names: list[str]) -> tuple[dict[str, tuple[str, str]], list
             name, _, ver = spec.partition("@")
             if (name, ver) not in after:
                 continue  # Already moved by a transitive update.
-            if retried := try_cargo_update([spec]):
+            retried, reason = try_cargo_update([spec])
+            if retried:
                 after = retried
             else:
-                rejected.append(spec)
+                rejected.append((spec, reason))
 
     old_versions = dict(before)
     updated = {
@@ -147,7 +155,9 @@ def run_free_updates(names: set[str], our_pkgs: PackageIndex, label: str) -> Non
     if rejected:
         # Distinct from "nothing to do": cargo refused these, or taking them would
         # have added a duplicate version.
-        print(f"Could not update {len(rejected)} package(s): {', '.join(rejected)}")
+        print(f"Could not update {len(rejected)} package(s):")
+        for spec, reason in rejected:
+            print(f"  {spec}: {reason}")
     elif not updated:
         print(f"All {label} already at newest compatible version")
 
@@ -296,7 +306,7 @@ def dedup_non_gecko_duplicates(
                 continue
 
             snapshot = LOCKFILE.read_text(encoding="utf-8")
-            after = try_cargo_update([f"{n}@{v}" for n, v in safe_deps])
+            after, _ = try_cargo_update([f"{n}@{v}" for n, v in safe_deps])
 
             if after and (name, off_ver) not in after:
                 resolved.append((name, off_ver))

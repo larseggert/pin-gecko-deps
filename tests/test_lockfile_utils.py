@@ -46,7 +46,7 @@ def test_get_duplicate_packages_only_returns_multi_version_packages():
     lock = {
         "package": [_pkg("foo", "1.0.0"), _pkg("foo", "1.1.0"), _pkg("bar", "2.0.0")]
     }
-    assert get_duplicate_packages(lock) == {"foo": ["1.0.0", "1.1.0"]}
+    assert get_duplicate_packages(lock) == {"foo": {"1.0.0", "1.1.0"}}
 
 
 def test_workspace_crates_excludes_sourced_packages():
@@ -72,5 +72,5 @@ def test_classify_version_relation():
 
 def test_find_non_gecko_duplicates_flags_versions_outside_geckos_ranges():
     our_lock = {"package": [_pkg("foo", "1.0.0"), _pkg("foo", "2.0.0")]}
-    gecko_versions = {"foo": [("1.0.0", "registry")]}
+    gecko_versions = {"foo": {"1.0.0"}}
     assert find_non_gecko_duplicates(our_lock, gecko_versions) == {"foo": ["2.0.0"]}

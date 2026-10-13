@@ -15,6 +15,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from collections.abc import Iterable
+from itertools import zip_longest
 from pathlib import Path
 from typing import NamedTuple, NoReturn
 from urllib.request import Request, urlopen
@@ -97,7 +98,7 @@ class PinPolicy(NamedTuple):
 
     gecko_versions: VersionIndex
     neqo_only: set[str]
-    pinnable: set[str]
+    pinnable: set[tuple[str, str]]
     dev_only: set[str]
     # Only Gecko's crates.io releases; its local shims and git forks carry crates.io
     # version numbers but different code, so they are never pin targets.
@@ -124,8 +125,13 @@ class PinPolicy(NamedTuple):
 
 
 def run_cargo(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run a cargo subcommand, capturing its output and never raising."""
-    return subprocess.run(["cargo", *args], capture_output=True, text=True, check=False)
+    """Run a cargo subcommand, capturing its output; exits if cargo can't run."""
+    try:
+        return subprocess.run(
+            ["cargo", *args], capture_output=True, text=True, check=False
+        )
+    except OSError as e:
+        fatal(f"Error: could not run cargo: {e}")
 
 
 def fatal(message: str) -> NoReturn:
@@ -502,30 +508,32 @@ def find_compatible_gecko_range(
     if major == "0":
         return []
 
-    sv = Version(sv_range)
+    same_major = [gr for gr in gecko_by_range if gr.split(".")[0] == major]
+    nearest = by_nearness(sv_range, same_major)
+    return gecko_by_range[nearest[0]] if nearest else []
 
-    for gr in sorted(gecko_by_range, key=Version, reverse=True):
-        if gr.split(".")[0] == major and Version(gr) > sv:
-            return gecko_by_range[gr]
 
-    for gr in sorted(gecko_by_range, key=Version, reverse=True):
-        if gr.split(".")[0] == major and Version(gr) < sv:
-            return gecko_by_range[gr]
-
-    return []
+def by_nearness(ref: str, versions: Iterable[str]) -> list[str]:
+    """Order versions above `ref` lowest first, then those below it highest first."""
+    ref_ver = Version(ref)
+    ordered = sorted(versions, key=Version)
+    higher = [v for v in ordered if Version(v) > ref_ver]
+    lower = [v for v in reversed(ordered) if Version(v) < ref_ver]
+    return higher + lower
 
 
 def align_package_with_gecko(
     name: str,
     gecko_pkgs: PackageIndex,
     our_pkgs: PackageIndex,
-) -> dict[tuple[str, str], str]:
+) -> dict[tuple[str, str], list[str]]:
     """Compute version moves to align a package's versions with Gecko's.
 
     Emits moves for versions that differ from Gecko's, in both directions.
-    Returns {(name, our_ver): gecko_ver} for versions that need moving.
+    Returns {(name, our_ver): [gecko_ver, ...]} for versions that need moving, with
+    the Gecko versions they could move to in order of preference.
     """
-    updates: dict[tuple[str, str], str] = {}
+    updates: dict[tuple[str, str], list[str]] = {}
     our_versions = our_pkgs[name]
 
     if all(not is_registry_package(info) for info in our_versions.values()):
@@ -548,12 +556,16 @@ def align_package_with_gecko(
             sv_rng, gecko_by_range
         )
         if not gecko_vers:
+            # Gecko is on another semver line.  Target its nearest release anyway;
+            # collect_pin_targets blocks the pin unless every requirement allows it.
+            for our_ver in our_vers:
+                updates[(name, our_ver)] = by_nearness(our_ver, gecko_real)
             continue
 
-        gecko_ver = max(gecko_vers, key=Version)
+        preferred = sorted(gecko_vers, key=Version, reverse=True)
         for our_ver in our_vers:
             if classify_version_relation(our_ver, gecko_vers) in ("behind", "ahead"):
-                updates[(name, our_ver)] = gecko_ver
+                updates[(name, our_ver)] = preferred
 
     return updates
 
@@ -583,17 +595,19 @@ def collect_pin_targets(
     for name in common:
         if name in neqo_only:
             continue
-        for key, gecko_ver in align_package_with_gecko(
+        for key, candidates in align_package_with_gecko(
             name, gecko_pkgs, our_pkgs
         ).items():
             _, our_ver = key
-            blockers = find_blocking_requirements(
-                name, our_ver, [gecko_ver], requirements
-            )
-            if blockers:
-                blocked[key] = BlockedPin(gecko_ver, *blockers[0])
+            blockers = {
+                ver: find_blocking_requirements(name, our_ver, [ver], requirements)
+                for ver in candidates
+            }
+            # Take the first candidate every requirement allows.
+            if target := next((ver for ver in candidates if not blockers[ver]), None):
+                pins[key] = target
             else:
-                pins[key] = gecko_ver
+                blocked[key] = BlockedPin(candidates[0], *blockers[candidates[0]][0])
 
     return PinPlan(pins, blocked)
 
@@ -642,14 +656,16 @@ def find_non_gecko_duplicates(
 
 def reachable_packages(
     metadata: dict, roots: Iterable[str], kinds: set[str | None]
-) -> set[str]:
+) -> set[tuple[str, str]]:
     """Walk the resolved graph from `roots`, following only the given edge kinds.
 
     A dependency's kind is null for a normal dependency, "dev" or "build" otherwise.
-    Returns the names of every package reached, roots included.
+    Returns the (name, version) of every package reached, roots included.
     """
     nodes = {node["id"]: node for node in metadata.get("resolve", {}).get("nodes", [])}
-    names = {pkg["id"]: pkg["name"] for pkg in metadata["packages"]}
+    versions = {
+        pkg["id"]: (pkg["name"], pkg["version"]) for pkg in metadata["packages"]
+    }
 
     reached: set[str] = set()
     to_visit = list(roots)
@@ -662,7 +678,7 @@ def reachable_packages(
             if any(k.get("kind") in kinds for k in dep.get("dep_kinds", [])):
                 to_visit.append(dep["pkg"])
 
-    return {names[pkg_id] for pkg_id in reached if pkg_id in names}
+    return {versions[pkg_id] for pkg_id in reached if pkg_id in versions}
 
 
 def find_dev_only_packages(metadata: dict) -> set[str]:
@@ -673,7 +689,8 @@ def find_dev_only_packages(metadata: dict) -> set[str]:
     up `[target."cfg(...)".dependencies]` and renamed deps
     (`nss = { package = "nss-rs" }`) for free.
     """
-    normal = reachable_packages(metadata, metadata.get("workspace_members", []), {None})
+    members = metadata.get("workspace_members", [])
+    normal = {name for name, _ver in reachable_packages(metadata, members, {None})}
     return {pkg["name"] for pkg in metadata["packages"]} - normal
 
 
@@ -686,8 +703,8 @@ def find_vendored_crates(gecko_lock: dict) -> set[str]:
     }
 
 
-def find_pinnable_packages(metadata: dict, gecko_lock: dict) -> set[str]:
-    """Find packages whose version can reach a Gecko build of neqo.
+def find_pinnable_packages(metadata: dict, gecko_lock: dict) -> set[tuple[str, str]]:
+    """Find the (name, version) pairs that can reach a Gecko build of neqo.
 
     Walks our resolved graph from the crates Gecko vendors, following normal and
     build edges: Gecko builds a vendored crate's dependencies and runs its build
@@ -730,7 +747,7 @@ def explain_version(
         return Rationale(
             "Not pinned to Gecko yet",
             "these reach a Gecko build, so they have to match — run `update-lockfile`"
-            if name in policy.pinnable
+            if (name, our_ver) in policy.pinnable
             else "we track Gecko even where it cannot affect Firefox — run "
             "`update-lockfile`",
             f"should be {pin_target}",
@@ -771,7 +788,7 @@ def explain_version(
             "Gecko picks up whatever we hold at the next vendor",
         )
 
-    if name not in policy.pinnable:
+    if (name, our_ver) not in policy.pinnable:
         pullers = sorted({dep for dep, _ver in find_dependents(our_lock, name)})
         return Rationale(
             "Gecko resolves these itself",
@@ -844,20 +861,39 @@ def change_rationales(
     old, new = group_versions(before), group_versions(after)
     entries = []
     for name in sorted(set(old) | set(new)):
-        if old.get(name) == new.get(name):
-            continue
-        was = ", ".join(sorted(old.get(name, set()))) or "absent"
-        now = ", ".join(sorted(new.get(name, set())))
-        why = explain_version(
-            name,
-            # Explain against the surviving version; a removed package has none.
-            max(new.get(name, set()), key=Version, default=""),
-            policy,
-            our_lock,
-            blocked=next((p for (n, _v), p in plan.blocked.items() if n == name), None),
-        )
-        entries.append((name, f"{was} → {now}" if now else "", why))
+        was_set, now_set = old.get(name, set()), new.get(name, set())
+        for was, now in pair_version_moves(was_set - now_set, now_set - was_set):
+            why = explain_version(
+                name,
+                now,
+                policy,
+                our_lock,
+                blocked=plan.blocked.get((name, now)),
+            )
+            change = f"{was or 'absent'} → {now}" if now else f"{was} removed"
+            entries.append((name, change, why))
     return entries
+
+
+def pair_version_moves(
+    removed: Iterable[str], added: Iterable[str]
+) -> list[tuple[str, str]]:
+    """Pair each removed version with the added one it moved to, as (was, now).
+
+    Versions on the same semver line pair first, then the rest in order; whatever is
+    left over was dropped (now is "") or newly added (was is "").
+    """
+    unmatched = sorted(removed, key=Version)
+    pairs, unpaired = [], []
+    for now in sorted(added, key=Version):
+        was = next((r for r in unmatched if semver_range(r) == semver_range(now)), "")
+        if was:
+            unmatched.remove(was)
+            pairs.append((was, now))
+        else:
+            unpaired.append(now)
+    pairs.extend(zip_longest(unmatched, unpaired, fillvalue=""))
+    return sorted(pairs, key=lambda p: Version(p[0] or p[1]))
 
 
 def divergence_rationales(

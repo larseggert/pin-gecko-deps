@@ -180,20 +180,21 @@ def check_invariant_a(
 def classify_issues_by_severity(
     mismatches: list[Mismatch],
     plan: PinPlan,
-    pinnable: set[str],
+    pinnable: set[tuple[str, str]],
     neqo_only: set[str],
     dev_only: set[str],
     our_lock: dict,
 ) -> tuple[list[Mismatch], list[Mismatch]]:
     """Split mismatches into hard violations and warnings, filling in the category.
 
-    Hard violations: versions update-lockfile pins to Gecko that haven't been moved
-                     yet (invariant C).  Dev- and build-dependencies count: Gecko
-                     doesn't adopt them when neqo is vendored, so a mismatch in
-                     either direction is a real misalignment.
-    Warnings:        everything update-lockfile leaves alone — neqo-only deps ahead
-                     of Gecko, versions in a semver range Gecko doesn't carry, and
-                     pins another crate's requirement rules out (invariant B).
+    Hard violations: versions that can reach a Gecko build which update-lockfile
+                     pins to Gecko but that haven't been moved yet (invariant C).
+                     Dev- and build-dependencies count: Gecko doesn't adopt them
+                     when neqo is vendored, so a mismatch in either direction is a
+                     real misalignment.
+    Warnings:        everything else — pending pins Gecko's build can't see,
+                     neqo-only deps ahead of Gecko, and pins another crate's
+                     requirement rules out (invariant B).
     """
     hard_violations: list[Mismatch] = []
     warnings: list[Mismatch] = []
@@ -204,9 +205,8 @@ def classify_issues_by_severity(
         )
         # Only a violation when the version could actually reach a Gecko build;
         # elsewhere we still aim for Gecko's version, but missing it harms nothing.
-        is_hard = mismatch.name in pinnable and any(
-            (mismatch.name, issue.our_ver) in plan.targets for issue in mismatch.issues
-        )
+        pending = {(mismatch.name, issue.our_ver) for issue in mismatch.issues}
+        is_hard = bool(pending & plan.targets.keys() & pinnable)
         (hard_violations if is_hard else warnings).append(categorized)
 
     return hard_violations, warnings

@@ -14,10 +14,11 @@ uvx --from git+https://github.com/larseggert/pin-gecko-deps compare-lockfile
 
 Fetches Gecko's `Cargo.lock` and checks that ours is aligned with it. Hard
 violations are duplicate versions Gecko doesn't itself carry, and shared
-dependencies sitting on a version other than Gecko's. Everything else is
-advisory: deps ahead of Gecko that the next vendor picks up, deps on a semver
-range Gecko doesn't carry, and pins another crate's version requirement rules
-out. Mismatches are labelled production-affecting or dev/build-only.
+dependencies that can reach a Gecko build sitting on a version other than
+Gecko's. Everything else is advisory: deps ahead of Gecko that the next vendor
+picks up, drift Gecko's build can't see, and pins another crate's version
+requirement rules out. Mismatches are labelled production-affecting or
+dev/build-only.
 
 Exit status is `0` when every invariant holds, `1` when there are hard
 violations, and `2` if the check could not run (no `Cargo.lock`, `cargo` or
@@ -31,9 +32,10 @@ uvx --from git+https://github.com/larseggert/pin-gecko-deps update-lockfile
 ```
 
 Pins every dependency Gecko carries to Gecko's exact version, dev- and
-build-dependencies included, staying as close to Gecko as cargo allows. Where a
-requirement rules Gecko's version out, the version is left alone rather than
-bumped to latest. Packages Gecko has no version of, and packages only neqo uses
+build-dependencies included, staying as close to Gecko as cargo allows. That
+includes moving to another semver line when every requirement allows Gecko's
+version. Where a requirement rules Gecko's version out, the version is left alone
+rather than bumped to latest. Packages Gecko has no version of, and packages only neqo uses
 within Gecko, are bumped to their newest compatible version.
 
 Drift is only a hard violation for packages whose version can reach a Gecko build

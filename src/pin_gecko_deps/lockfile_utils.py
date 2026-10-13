@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from collections import defaultdict
 from collections.abc import Iterable
 from itertools import zip_longest
@@ -20,10 +21,7 @@ from pathlib import Path
 from typing import NamedTuple, NoReturn
 from urllib.request import Request, urlopen
 
-import tomlkit
-from packaging.version import Version
-from semantic_version import SimpleSpec
-from semantic_version import Version as SemVer
+from semantic_version import SimpleSpec, Version
 
 GECKO_RAW_URL = (
     "https://raw.githubusercontent.com/mozilla-firefox/firefox/refs/heads/main"
@@ -158,8 +156,8 @@ def load_lockfile(src: str | Path) -> dict:
     """Load a Cargo.lock from a path or URL."""
     if isinstance(src, str) and src.startswith(("http://", "https://")):
         with urlopen(src, timeout=HTTP_TIMEOUT) as response:
-            return tomlkit.loads(response.read().decode())
-    return tomlkit.loads(Path(src).read_text(encoding="utf-8"))
+            return tomllib.loads(response.read().decode())
+    return tomllib.loads(Path(src).read_text(encoding="utf-8"))
 
 
 def packages(lock: dict) -> list[dict]:
@@ -351,7 +349,7 @@ def fetch_netwerk_crates() -> set[str]:
         raw_url = f"{GECKO_RAW_URL}/netwerk/{path}"
         try:
             with urlopen(raw_url, timeout=HTTP_TIMEOUT) as response:
-                cargo = tomlkit.loads(response.read().decode())
+                cargo = tomllib.loads(response.read().decode())
         except Exception as e:
             fatal(f"Error: could not fetch netwerk/{path}: {e}")
         name = cargo.get("package", {}).get("name")
@@ -459,12 +457,13 @@ def load_version_requirements(metadata: dict) -> Requirements:
 def _requirement_matches(req: str, version: str) -> bool:
     """Check a Cargo semver requirement against a concrete version.
 
-    Build metadata is stripped, as Cargo ignores it when comparing.  Requirements
-    we can't parse are treated as satisfied, so they never block a pin.
+    Build metadata is stripped from the requirement, as Cargo ignores it and
+    SimpleSpec rejects it.  Requirements we can't parse are treated as satisfied,
+    so they never block a pin.
     """
     comparators = ",".join(part.strip().split("+")[0] for part in req.split(","))
     try:
-        return SemVer(version.split("+")[0]) in SimpleSpec(comparators)
+        return Version(version) in SimpleSpec(comparators)
     except ValueError:
         return True
 
@@ -514,11 +513,14 @@ def find_compatible_gecko_range(
 
 
 def by_nearness(ref: str, versions: Iterable[str]) -> list[str]:
-    """Order versions above `ref` lowest first, then those below it highest first."""
-    ref_ver = Version(ref)
-    ordered = sorted(versions, key=Version)
-    higher = [v for v in ordered if Version(v) > ref_ver]
-    lower = [v for v in reversed(ordered) if Version(v) < ref_ver]
+    """Order versions above `ref` lowest first, then those below it highest first.
+
+    Also orders "major.minor" semver ranges, which `Version.coerce` completes.
+    """
+    ref_ver = Version.coerce(ref)
+    ordered = sorted(versions, key=Version.coerce)
+    higher = [v for v in ordered if Version.coerce(v) > ref_ver]
+    lower = [v for v in reversed(ordered) if Version.coerce(v) < ref_ver]
     return higher + lower
 
 

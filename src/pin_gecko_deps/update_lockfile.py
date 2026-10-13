@@ -30,7 +30,7 @@ import sys
 from collections import defaultdict
 from graphlib import CycleError, TopologicalSorter
 
-from packaging.version import Version
+from semantic_version import Version
 
 from .lockfile_utils import (
     LOCKFILE,

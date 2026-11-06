@@ -15,6 +15,7 @@ from pin_gecko_deps.lockfile_utils import (
     find_pinnable_packages,
     get_duplicate_packages,
     group_by_semver_range,
+    is_gecko_release,
     is_registry_package,
     pair_version_moves,
     parse_packages,
@@ -69,6 +70,28 @@ def test_is_registry_package_distinguishes_local_patches():
     assert is_registry_package({"source": "registry+https://x"})
     assert not is_registry_package({"source": None})
     assert not is_registry_package({"source": "git+https://x"})
+
+
+def test_is_gecko_release_accepts_local_copies_but_not_shims_or_forks():
+    assert is_gecko_release("0.73.1", {"source": "registry+https://x"})
+    assert is_gecko_release("0.73.1", {"source": None})
+    assert not is_gecko_release("0.72.999", {"source": None})
+    assert not is_gecko_release("0.73.1", {"source": "git+https://x"})
+
+
+def test_align_package_with_gecko_pins_to_local_gecko_copy():
+    gecko = parse_packages(
+        {
+            "package": [
+                _pkg("bindgen", "0.72.999", source=None),
+                _pkg("bindgen", "0.73.1", source=None),
+            ]
+        }
+    )
+    ours = parse_packages({"package": [_pkg("bindgen", "0.73.2")]})
+    assert align_package_with_gecko("bindgen", gecko, ours) == {
+        ("bindgen", "0.73.2"): ["0.73.1"]
+    }
 
 
 def test_classify_version_relation():

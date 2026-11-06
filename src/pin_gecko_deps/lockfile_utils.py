@@ -98,8 +98,7 @@ class PinPolicy(NamedTuple):
     neqo_only: set[str]
     pinnable: set[tuple[str, str]]
     dev_only: set[str]
-    # Only Gecko's crates.io releases; its local shims and git forks carry crates.io
-    # version numbers but different code, so they are never pin targets.
+    # Gecko versions that stand in for a crates.io release (see is_gecko_release).
     gecko_releases: VersionIndex
     requirements: Requirements
 
@@ -115,7 +114,7 @@ class PinPolicy(NamedTuple):
             find_pinnable_packages(metadata, gecko_lock),
             find_dev_only_packages(metadata),
             {
-                name: {v for v, info in vers.items() if is_registry_package(info)}
+                name: {v for v, info in vers.items() if is_gecko_release(v, info)}
                 for name, vers in gecko_pkgs.items()
             },
             load_version_requirements(metadata),
@@ -317,6 +316,17 @@ def is_registry_package(info: dict) -> bool:
     """Check if a package version is from a registry (not a local patch)."""
     source = info.get("source")
     return source is not None and source.startswith("registry")
+
+
+def is_gecko_release(version: str, info: dict) -> bool:
+    """Check if a Gecko package version stands in for that crates.io release.
+
+    Gecko's local path copies claim the version they replace; only x.y.999 shims
+    don't correspond to a release.  Git forks are never pin targets.
+    """
+    if not info.get("source"):
+        return not version.endswith(".999")
+    return is_registry_package(info)
 
 
 def fetch_netwerk_crates() -> set[str]:
@@ -541,11 +551,8 @@ def align_package_with_gecko(
     if all(not is_registry_package(info) for info in our_versions.values()):
         return updates
 
-    # Only pin against Gecko versions that come from a registry.  Gecko's local
-    # shim crates (versioned x.y.999) and its git forks carry crates.io version
-    # numbers but different code, so matching their version buys us nothing.
     gecko_real = [
-        v for v, info in gecko_pkgs[name].items() if is_registry_package(info)
+        v for v, info in gecko_pkgs[name].items() if is_gecko_release(v, info)
     ]
     if not gecko_real:
         return updates
